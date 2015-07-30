@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 # MIT License, (c) Joshua Wright jwright@willhackforsushi.com
 # https://github.com/joswr1ght/md5deep
-import os, sys, hashlib
+import os, sys, hashlib, re
 
 # Reproduce this output with slashes consistent for Windows systems
 #ba2812a436909554688154be461d976c  A\SEC575-Clown-Chat\nvram
+
+# file regex
+md5Regex = re.compile(r'^(?P<hash>[a-f0-9]{32})  (?P<path>(/)?([^/\0]+(/)?)+)\n$')
 
 # Optimized for low-memory systems, read whole file with blocksize=0
 def md5sum(filename, blocksize=65536):
@@ -17,30 +20,43 @@ def md5sum(filename, blocksize=65536):
 def usage():
     print "Usage: md5deep.py [OPTIONS] [FILES]"
     print "-r        - recursive mode, all subdirectories are traversed."
+    print "-n        - During any of the matching modes (-m,-M,-x,or -X), displays only the filenames of any known hashes that were not matched by any of the input files."
+    print "-M <file> - enables matching mode."
+    print "-m <file> - as above."
     print "-X <file> - enables negative matching mode."
+    print "-x <file> - as above."
+    print "-n        - used with -MmXx so only file name outputed."
+    print "-f        - speed up hash calculations, using more memory."
     print "-f        - speed up hash calculations, using more memory."
     print "-0        - Uses a NULL character (/0) to terminate each line instead of a newline. Useful for processing filenames with strange characters."
 
-def validate_hashes(hashfile, hashlist):
+def formatOutput(hash, path):
+    if opt_nameonly:
+        print "%s%s"%(path,  opt_endofline)
+    else:
+        print "%s  %s%s"%(hash, path, opt_endofline)
+
+
+def validate_hashes(hashfile, hashlist, mode):
     # Open file and build a new hashlist
     hashlistrec = []
     with open(hashfile, "r") as f:
         for line in f:
-            filehash,filename = line.rstrip().split("  ")
-            # Convert to platform covention directory separators
-            filename = normfname(filename)
-            # Add entry to hashlistrec
-            hashlistrec.append((filename, filehash))
-        for diff in list(set(hashlistrec) - set(hashlist)):
-            # Replicate "-n" md5deep functionality; print only the filename
-            # if the file is missing in the filename list; print the hash
-            # of the current file if it is different from the negative match
-            # file.
-            if (not os.path.isfile(diff[0])):
-                # File from negative match list is missing, just print filename
-                print winfname(diff[0])
-            else:
-                print diff[0] + "  " + winfname(diff[1])
+            hashpair = md5Regex.match(line)
+            if hashpair:
+               filehash = hashpair.group('hash')
+               filename = hashpair.group('path')
+               # Convert to platform covention directory separators
+               filename = normfname(hashpair.group('path'))
+               # Add entry to hashlistrec
+               hashlistrec.append((filename, filehash))
+
+        if mode == "neg":
+            for diff in list(set(hashlist) - set(hashlistrec)):
+                formatOutput(diff[1], normfname(diff[0]))
+        elif mode == "pos":
+            for inter in list(set(hashlistrec) & set(hashlist)):
+                formatOutput(inter[1], normfname(inter[0]))
 
 # Produce a Windows-style filename
 def winfname(filename):
@@ -58,8 +74,11 @@ if __name__ == '__main__':
     
     opt_recursive = None
     opt_negmatch = None
+    opt_match = None
+    opt_nameonly = None
+    opt_hashtable = None
     opt_fast = None
-    opt_null = None
+    opt_endofline = ""
     opt_files = []
 
     if len(sys.argv) == 1:
@@ -73,15 +92,24 @@ if __name__ == '__main__':
             opt_recursive = True
             continue
         elif i == '-0':
-            opt_null = True
+            opt_endofline = "\0"
             continue
         elif i == '-f':
             opt_fast = True
-        elif i == '-X':
+        elif i == '-X' or i == '-x':
             opt_negmatch = next(it)
             if not os.path.isfile(opt_negmatch):
                 sys.stdout.write("Cannot open negative match file %s\n"%opt_negmatch)
                 sys.exit(-1)
+            continue
+        elif i == '-M' or i == '-m':
+            opt_match = next(it)
+            if not os.path.isfile(opt_match):
+                sys.stdout.write("Cannot open match file %s\n"%opt_match)
+                sys.exit(-1)
+            continue
+        elif i == '-n' and (opt_negmatch or opt_match):
+            opt_nameonly = True
             continue
         else:
             opt_files.append(i)
@@ -91,6 +119,14 @@ if __name__ == '__main__':
     else:
         # Default to optimize for low-memory systems
         md5blocklen=65536
+
+    # If we are not doing matching then we by-pass the hashtable
+    # this saves RAM and allows us to process much larger filesystems
+    if opt_negmatch or opt_match:
+        opt_hashtable = True
+    else:
+        opt_hashtable = False
+
 
     # Build a list of (hash,filename) for each file, regardless of specified 
     # options
@@ -106,16 +142,19 @@ if __name__ == '__main__':
             for (directory, _, files) in os.walk(start):
                 for f in files:
                     path = os.path.join(directory, f)
-                    hashlist.append((path, md5sum(path, md5blocklen)))
+                    if opt_hashtable:
+                       hashlist.append((path, md5sum(path, md5blocklen)))
+                    else:
+	               formatOutput(md5sum(path, md5blocklen),  path)
+                       
 
-    # With the hashlist built, compare to the negative match list, or print
+    # With the hashlist built, compare to the negative/posative match list, or print
     # the results.
     if opt_negmatch:
-        validate_hashes(opt_negmatch, hashlist)
+        validate_hashes(opt_negmatch, hashlist, "neg")
+    elif opt_match:
+        validate_hashes(opt_match, hashlist, "pos")
     else:
         # Just print out the list with Windows-syle filenames
         for hash in hashlist:
-           if opt_null:
-              print "%s  %s\0"%(hash[1],winfname(hash[0]))
-           else:
-              print "%s  %s"%(hash[1],winfname(hash[0]))
+           formatOutput(hash[1],normfname(hash[0]))
