@@ -1,13 +1,17 @@
 #!/usr/bin/env python
 # MIT License, (c) Joshua Wright jwright@willhackforsushi.com
 # https://github.com/joswr1ght/md5deep
-import os, sys, hashlib, re
+import os, sys, hashlib, re, multiprocessing
+from Queue import Queue
+from threading import Thread
 
 # Reproduce this output with slashes consistent for Windows systems
 #ba2812a436909554688154be461d976c  A\SEC575-Clown-Chat\nvram
 
 # file regex
 md5Regex = re.compile(r'^(?P<hash>[a-f0-9]{32})  (?P<path>(/)?([^/\0]+(/)?)+)\n$')
+
+file_queue = Queue()
 
 # Optimized for low-memory systems, read whole file with blocksize=0
 def md5sum(filename, blocksize=65536):
@@ -29,6 +33,7 @@ def usage():
     print "-f        - speed up hash calculations, using more memory."
     print "-f        - speed up hash calculations, using more memory."
     print "-0        - Uses a NULL character (/0) to terminate each line instead of a newline. Useful for processing filenames with strange characters."
+    print "-jnn      - Controls multi-threading. By default the program will create one producer thread to scan the file system and one hashing thread per CPU core. Multi-threading causes output filenames to be in non-deterministic order, as files that take longer to hash will be delayed while they are hashed. If a deterministic order is required, specify -j0 to disable multi-threading."
 
 def formatOutput(hash, path):
     if opt_nameonly:
@@ -58,10 +63,6 @@ def validate_hashes(hashfile, hashlist, mode):
             for inter in list(set(hashlistrec) & set(hashlist)):
                 formatOutput(inter[1], normfname(inter[0]))
 
-# Produce a Windows-style filename
-def winfname(filename):
-    return filename.replace("/","\\")
-
 # Normalize filename based on platform
 def normfname(filename):
     if os.name == 'nt': # Windows
@@ -69,6 +70,12 @@ def normfname(filename):
     else:
         return filename.replace("\\","/")
 
+# Worker thread function
+def calcMD5(i, q):
+    while True:
+        path = q.get()
+        formatOutput(md5sum(path), path)
+        q.task_done()
 
 if __name__ == '__main__':
     
@@ -80,6 +87,7 @@ if __name__ == '__main__':
     opt_fast = None
     opt_endofline = ""
     opt_files = []
+    opt_threads = multiprocessing.cpu_count()
 
     if len(sys.argv) == 1:
         usage()
@@ -111,6 +119,9 @@ if __name__ == '__main__':
         elif i == '-n' and (opt_negmatch or opt_match):
             opt_nameonly = True
             continue
+        elif i.startswith('-j'):
+            opt_threads = int(i[2:])
+            continue
         else:
             opt_files.append(i)
 
@@ -127,7 +138,12 @@ if __name__ == '__main__':
     else:
         opt_hashtable = False
 
-
+    if opt_threads:
+        for i in range(opt_threads):
+            worker = Thread(target=calcMD5, args=(i, file_queue))
+            worker.setDaemon(True)
+            worker.start()
+ 
     # Build a list of (hash,filename) for each file, regardless of specified 
     # options
     hashlist = []
@@ -144,13 +160,19 @@ if __name__ == '__main__':
                     path = os.path.join(directory, f)
                     if opt_hashtable:
                        hashlist.append((path, md5sum(path, md5blocklen)))
+                    elif opt_threads:
+                       # Add it to the queue
+                       file_queue.put(path)     
                     else:
+                       # Threading disabled
 	               formatOutput(md5sum(path, md5blocklen),  path)
                        
 
     # With the hashlist built, compare to the negative/posative match list, or print
     # the results.
-    if opt_negmatch:
+    if opt_threads:
+        file_queue.join()
+    elif opt_negmatch:
         validate_hashes(opt_negmatch, hashlist, "neg")
     elif opt_match:
         validate_hashes(opt_match, hashlist, "pos")
