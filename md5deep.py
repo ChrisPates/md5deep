@@ -41,7 +41,6 @@ def formatOutput(hash, path):
     else:
         print "%s  %s%s"%(hash, path, opt_endofline)
 
-
 def validate_hashes(hashfile, hashlist, mode):
     # Open file and build a new hashlist
     hashlistrec = []
@@ -74,7 +73,7 @@ def normfname(filename):
 def calcMD5(i, q):
     while True:
         path = q.get()
-        formatOutput(md5sum(path), path)
+	formatOutput(md5sum(path, md5blocklen),  path)
         q.task_done()
 
 if __name__ == '__main__':
