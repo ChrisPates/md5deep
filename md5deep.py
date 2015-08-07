@@ -5,13 +5,16 @@ import os, sys, hashlib, re, multiprocessing
 from Queue import Queue
 from threading import Thread
 
+# To stop the queue from consuming all the RAM available
+MaxQueue = 1000
+
 # Reproduce this output with slashes consistent for Windows systems
 #ba2812a436909554688154be461d976c  A\SEC575-Clown-Chat\nvram
 
 # file regex
 md5Regex = re.compile(r'^(?P<hash>[a-f0-9]{32})  (?P<path>(/)?([^/\0]+(/)?)+)\n$')
 
-file_queue = Queue()
+file_queue = Queue(MaxQueue)
 
 # Optimized for low-memory systems, read whole file with blocksize=0
 def md5sum(filename, blocksize=65536):
