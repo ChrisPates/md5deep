@@ -4,6 +4,7 @@
 import os, sys, hashlib, re, multiprocessing
 from Queue import Queue
 from threading import Thread
+import time, datetime
 
 # To stop the queue from consuming all the RAM available
 MaxQueue = 1000
@@ -12,7 +13,7 @@ MaxQueue = 1000
 #ba2812a436909554688154be461d976c  A\SEC575-Clown-Chat\nvram
 
 # file regex
-md5Regex = re.compile(r'^(?P<hash>[a-f0-9]{32})  (?P<path>(/)?([^/\0]+(/)?)+)\n$')
+md5FileRegex = re.compile(r'^(?P<hash>[a-f0-9]{32})  (?P<path>(/)?([^/\0]+(/)?)+)\n$')
 
 file_queue = Queue(MaxQueue)
 
@@ -22,7 +23,12 @@ def md5sum(filename, blocksize=65536):
     with open(filename, "rb") as f:
         for block in iter(lambda: f.read(blocksize), ""):
             hash.update(block)
-    return hash.hexdigest()
+    return hash.hexdigest().strip()
+
+def mod_datetime(filename):
+    t = os.path.getmtime(filename)
+    return datetime.datetime.fromtimestamp(t)
+
 
 def usage():
     print "Usage: md5deep.py [OPTIONS] [FILES]"
@@ -34,22 +40,26 @@ def usage():
     print "-x <file> - as above."
     print "-n        - used with -MmXx so only file name outputed."
     print "-f        - speed up hash calculations, using more memory."
-    print "-f        - speed up hash calculations, using more memory."
     print "-0        - Uses a NULL character (/0) to terminate each line instead of a newline. Useful for processing filenames with strange characters."
     print "-jnn      - Controls multi-threading. By default the program will create one producer thread to scan the file system and one hashing thread per CPU core. Multi-threading causes output filenames to be in non-deterministic order, as files that take longer to hash will be delayed while they are hashed. If a deterministic order is required, specify -j0 to disable multi-threading."
+    print "-t yyyymmddThhmmss - include only files modified after the timestamp provided."
 
 def formatOutput(hash, path):
+    hash = hash.replace(" ","")
+    path = path.replace("\r","")
+    path = path.replace("\n","")
+
     if opt_nameonly:
-        print "%s%s"%(path,  opt_endofline)
+        sys.stdout.write("%s%s"%(path,  opt_endofline))
     else:
-        print "%s  %s%s"%(hash, path, opt_endofline)
+        sys.stdout.write("%s  %s%s"%(hash, path, opt_endofline))
 
 def validate_hashes(hashfile, hashlist, mode):
     # Open file and build a new hashlist
     hashlistrec = []
     with open(hashfile, "r") as f:
         for line in f:
-            hashpair = md5Regex.match(line)
+            hashpair = md5FileRegex.match(line)
             if hashpair:
                filehash = hashpair.group('hash')
                filename = hashpair.group('path')
@@ -87,9 +97,10 @@ if __name__ == '__main__':
     opt_nameonly = None
     opt_hashtable = None
     opt_fast = None
-    opt_endofline = ""
+    opt_endofline = "\n"
     opt_files = []
     opt_threads = multiprocessing.cpu_count()
+    opt_timestamp =""
 
     if len(sys.argv) == 1:
         usage()
@@ -102,7 +113,7 @@ if __name__ == '__main__':
             opt_recursive = True
             continue
         elif i == '-0':
-            opt_endofline = "\0"
+            opt_endofline = "\0\n"
             continue
         elif i == '-f':
             opt_fast = True
@@ -123,6 +134,12 @@ if __name__ == '__main__':
             continue
         elif i.startswith('-j'):
             opt_threads = int(i[2:])
+            continue
+        elif i == '-t':
+            opt_timestamp = datetime.datetime.strptime( next(it), "%Y%m%dT%H%M%S" )
+            if not opt_timestamp:
+                sys.stdout.write("Is not valid ISO timestamp %s\n"%opt_timestampe)
+                sys.exit(-1)
             continue
         else:
             opt_files.append(i)
@@ -162,12 +179,13 @@ if __name__ == '__main__':
                     path = os.path.join(directory, f)
                     if opt_hashtable:
                        hashlist.append((path, md5sum(path, md5blocklen)))
-                    elif opt_threads:
-                       # Add it to the queue
-                       file_queue.put(path)     
-                    else:
-                       # Threading disabled
-	               formatOutput(md5sum(path, md5blocklen),  path)
+                    elif not opt_timestamp or (mod_datetime(path) > opt_timestamp and opt_timestamp):
+                       if opt_threads:
+                          # Add it to the queue
+                          file_queue.put(path)     
+                       else:
+                          # Threading disabled
+	                  formatOutput(md5sum(path, md5blocklen),  path)
                        
 
     # With the hashlist built, compare to the negative/posative match list, or print
