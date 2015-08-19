@@ -113,7 +113,7 @@ if __name__ == '__main__':
             opt_recursive = True
             continue
         elif i == '-0':
-            opt_endofline = "\0\n"
+            opt_endofline = "\0"
             continue
         elif i == '-f':
             opt_fast = True
