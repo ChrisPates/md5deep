@@ -4,7 +4,7 @@
 import os, sys, hashlib, re, multiprocessing
 from Queue import Queue
 from threading import Thread
-import time, datetime
+import time, datetime, errno
 
 # To stop the queue from consuming all the RAM available
 MaxQueue = 1000
@@ -20,10 +20,17 @@ file_queue = Queue(MaxQueue)
 # Optimized for low-memory systems, read whole file with blocksize=0
 def md5sum(filename, blocksize=65536):
     hash = hashlib.md5()
-    with open(filename, "rb") as f:
-        for block in iter(lambda: f.read(blocksize), ""):
-            hash.update(block)
-    return hash.hexdigest().strip()
+  
+    try: 
+        with open(filename, "rb") as f:
+            for block in iter(lambda: f.read(blocksize), ""):
+                hash.update(block)
+        return hash.hexdigest().strip()
+    except IOError as e:
+        if e.errno == errno.EACCES:
+            sys.stderr.write("Permission denied: %s\n"%(filename))
+        return "00000000000000000000000000000000"
+        pass
 
 def mod_datetime(filename):
     t = os.path.getmtime(filename)
