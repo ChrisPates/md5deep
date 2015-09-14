@@ -49,6 +49,7 @@ def usage():
     print "-f        - speed up hash calculations, using more memory."
     print "-0        - Uses a NULL character (/0) to terminate each line instead of a newline. Useful for processing filenames with strange characters."
     print "-jnn      - Controls multi-threading. By default the program will create one producer thread to scan the file system and one hashing thread per CPU core. Multi-threading causes output filenames to be in non-deterministic order, as files that take longer to hash will be delayed while they are hashed. If a deterministic order is required, specify -j0 to disable multi-threading."
+    print "-s        - includes the targets of symlinks in the cargo, by default they are ignored."
     print "-t yyyymmddThhmmss - include only files modified after the timestamp provided."
 
 def formatOutput(hash, path):
@@ -107,6 +108,7 @@ if __name__ == '__main__':
     opt_endofline = "\n"
     opt_files = []
     opt_threads = multiprocessing.cpu_count()
+    opt_symlink = False
     opt_timestamp =""
 
     if len(sys.argv) == 1:
@@ -141,6 +143,9 @@ if __name__ == '__main__':
             continue
         elif i.startswith('-j'):
             opt_threads = int(i[2:])
+            continue
+        elif i == '-s':
+            opt_symlink = True
             continue
         elif i == '-t':
             opt_timestamp = datetime.datetime.strptime( next(it), "%Y%m%dT%H%M%S" )
@@ -184,15 +189,16 @@ if __name__ == '__main__':
             for (directory, _, files) in os.walk(start):
                 for f in files:
                     path = os.path.join(directory, f)
-                    if opt_hashtable:
-                       hashlist.append((path, md5sum(path, md5blocklen)))
-                    elif not opt_timestamp or (mod_datetime(path) > opt_timestamp and opt_timestamp):
-                       if opt_threads:
-                          # Add it to the queue
-                          file_queue.put(path)     
-                       else:
-                          # Threading disabled
-	                  formatOutput(md5sum(path, md5blocklen),  path)
+                    if (not(opt_symlink and os.path.islink(path))):
+                        if opt_hashtable:
+                            hashlist.append((path, md5sum(path, md5blocklen)))
+                        elif not opt_timestamp or (mod_datetime(path) > opt_timestamp and opt_timestamp):
+                            if opt_threads:
+                                # Add it to the queue
+                                file_queue.put(path)     
+                            else:
+                                # Threading disabled
+	                        formatOutput(md5sum(path, md5blocklen),  path)
                        
 
     # With the hashlist built, compare to the negative/posative match list, or print
